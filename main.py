@@ -8,16 +8,15 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 
 # ---------------------------------------------------------------------------
-# BROWSER SESSION CREATOR (To bypass NSE Cloudflare Blocks)
+# BROWSER SESSION CREATOR (To bypass Cloudflare IP blocks)
 # ---------------------------------------------------------------------------
 def get_nse_session():
     """Establishes an active browser session with NSE to capture required cookies."""
     session = requests.Session()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
         "Referer": "https://www.nseindia.com/"
     }
     session.headers.update(headers)
@@ -30,7 +29,7 @@ def get_nse_session():
 
 
 # ---------------------------------------------------------------------------
-# ACCURATE FII / DII FETCHING (No More 0.0)
+# ACCURATE FII / DII FETCHING
 # ---------------------------------------------------------------------------
 def fetch_fiidii_data():
     """
@@ -57,9 +56,7 @@ def fetch_fiidii_data():
                     elif "DII" in cat:
                         dii_nse = val
                 
-                print(f"[FII/DII Success] From NSE API -> FII: {fii_nse}, DII: {dii_nse}")
-                
-                # Fetch Combined Total (NSE + BSE) if available
+                # Fetch Combined Total (NSE + BSE)
                 resp_tot = session.get("https://www.nseindia.com/api/fiidiiTradeTotal", timeout=10)
                 if resp_tot.status_code == 200 and isinstance(resp_tot.json(), list):
                     for item in resp_tot.json():
@@ -73,6 +70,7 @@ def fetch_fiidii_data():
                     fii_total, dii_total = fii_nse, dii_nse
 
                 if fii_nse != 0.0 or dii_nse != 0.0:
+                    print(f"[FII/DII Success] NSE API -> FII: {fii_nse}, DII: {dii_nse}")
                     return fii_nse, dii_nse, fii_total, dii_total
     except Exception as e:
         print(f"[NSE FII/DII Note]: {e}")
@@ -80,13 +78,10 @@ def fetch_fiidii_data():
     # Source 2: Moneycontrol Public API Fallback
     try:
         mc_url = "https://priceapi.moneycontrol.com/pricefeed/notices/fiiDii"
-        mc_headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
+        mc_headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         res = requests.get(mc_url, headers=mc_headers, timeout=10)
         if res.status_code == 200:
             raw_data = res.json()
-            # Handle dictionary or nested structure safely
             data = raw_data.get("data", {}) if isinstance(raw_data, dict) else {}
             
             fii_str = str(data.get("fii_net", "0")).replace(',', '')
@@ -101,7 +96,7 @@ def fetch_fiidii_data():
             fii_total = float(fii_tot_str) if fii_tot_str != "None" else fii_nse
             dii_total = float(dii_tot_str) if dii_tot_str != "None" else dii_nse
 
-            print(f"[FII/DII Success] From Moneycontrol -> FII: {fii_nse}, DII: {dii_nse}")
+            print(f"[FII/DII Success] Moneycontrol -> FII: {fii_nse}, DII: {dii_nse}")
             return fii_nse, dii_nse, fii_total, dii_total
     except Exception as e:
         print(f"[Moneycontrol FII/DII Note]: {e}")
@@ -120,7 +115,6 @@ def fetch_nifty_options_analytics():
     pcr = 1.0
     max_pain = 25000
 
-    # Direct NSE Option Chain Parsing
     try:
         session = get_nse_session()
         session.headers.update({"Referer": "https://www.nseindia.com/option-chain"})
@@ -145,7 +139,6 @@ def fetch_nifty_options_analytics():
     except Exception as e:
         print(f"[NSE Option Chain Note]: {e}")
 
-    # Fallback Option Chain via Yahoo Finance
     try:
         nifty = yf.Ticker("^NSEI")
         if nifty.options:
@@ -255,20 +248,23 @@ def run():
     
     today_str = data_row[0]
     
-    # Check Column A for existing date to update single row
-    try:
-        col_a = worksheet.col_values(1)
-        if today_str in col_a:
-            idx = col_a.index(today_str) + 1
-            print(f"Row for {today_str} exists at row {idx}. Updating...")
-            worksheet.update(values=[data_row], range_name=f"A{idx}:V{idx}")
-            print("Successfully updated row!")
-        else:
-            worksheet.append_row(data_row)
-            print("Successfully appended new row!")
-    except Exception as e:
-        print(f"Fallback append: {e}")
+    # SINGLE-ROW DEDUPLICATION LOGIC
+    col_a = worksheet.col_values(1)
+    
+    if today_str in col_a:
+        row_idx = col_a.index(today_str) + 1
+        print(f"Row for {today_str} found at index {row_idx}. Updating existing row...")
+        
+        # Compat-safe cell range write for gspread v5 & v6
+        cell_list = worksheet.range(f"A{row_idx}:V{row_idx}")
+        for i, val in enumerate(data_row):
+            cell_list[i].value = val
+        worksheet.update_cells(cell_list)
+        
+        print("Successfully updated single existing row!")
+    else:
         worksheet.append_row(data_row)
+        print("Successfully appended new row!")
 
 
 if __name__ == "__main__":
