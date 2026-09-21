@@ -11,103 +11,118 @@ import yfinance as yf
 # 1. FETCH NIFTY 50 OHLC & CHANGE %
 # ---------------------------------------------------------------------------
 def fetch_nifty_ohlc_and_change():
-    """
-    Fetches Open, High, Low, Close, and % Change for Nifty 50 (^NSEI).
-    Returns: (open_price, high_price, low_price, close_price, pct_change_str)
-    """
-    open_price, high_price, low_price, close_price = 0.0, 0.0, 0.0, 0.0
-    pct_change_str = "+0.00%"
-    
+    """Fetches Open, High, Low, Close, and % Change for Nifty 50 (^NSEI)."""
+    open_p, high_p, low_p, close_p = 0.0, 0.0, 0.0, 0.0
+    pct_str = "+0.00%"
     try:
         nifty = yf.Ticker("^NSEI")
         hist = nifty.history(period="5d")
         if not hist.empty and len(hist) >= 2:
             latest = hist.iloc[-1]
             prev_close = hist['Close'].iloc[-2]
-            
-            open_price = round(latest['Open'], 2)
-            high_price = round(latest['High'], 2)
-            low_price = round(latest['Low'], 2)
-            close_price = round(latest['Close'], 2)
-            
-            diff = close_price - prev_close
-            pct_change = (diff / prev_close) * 100
-            pct_change_str = f"{pct_change:+.2f}%"
-            
-            print(f"[OHLC Success] Open: {open_price}, High: {high_price}, Low: {low_price}, Close: {close_price}, Change %: {pct_change_str}")
+            open_p = round(latest['Open'], 2)
+            high_p = round(latest['High'], 2)
+            low_p = round(latest['Low'], 2)
+            close_p = round(latest['Close'], 2)
+            diff = close_p - prev_close
+            pct = (diff / prev_close) * 100
+            pct_str = f"{pct:+.2f}%"
     except Exception as e:
         print(f"[OHLC Fetch Error]: {e}")
-        
-    return open_price, high_price, low_price, close_price, pct_change_str
+    return open_p, high_p, low_p, close_p, pct_str
 
 
 # ---------------------------------------------------------------------------
 # 2. FETCH EVENING CLOSING PCR
 # ---------------------------------------------------------------------------
 def fetch_nifty_pcr():
-    """Fetches Put-Call Ratio for active Nifty 50 contracts."""
+    """Fetches evening closing Put-Call Ratio."""
     pcr = 1.41
     try:
         resp = requests.get(
             "https://www.moneycontrol.com/india/indexmarket/statistics?classic=true",
-            headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            headers={"User-Agent": "Mozilla/5.0"},
             timeout=8
         )
         if resp.status_code == 200:
             match = re.search(r'Put\s*Call\s*Ratio\s*:\s*<b>([\d\.]+)</b>', resp.text, re.IGNORECASE)
             if match:
                 pcr = float(match.group(1))
-                print(f"[PCR Success]: {pcr}")
-                return pcr
     except Exception as e:
         print(f"[PCR Fetch Note]: {e}")
-
-    try:
-        nifty = yf.Ticker("^NSEI")
-        if nifty.options:
-            chain = nifty.option_chain(nifty.options[0])
-            c_oi = chain.calls['openInterest'].sum()
-            p_oi = chain.puts['openInterest'].sum()
-            if c_oi > 0:
-                pcr = round(p_oi / c_oi, 2)
-    except Exception as e:
-        print(f"[YFinance PCR Note]: {e}")
-
     return pcr
 
 
 # ---------------------------------------------------------------------------
-# 3. BUILD SHEET2 ROW VECTOR
+# 3. SHEET2 DYNAMIC CONDITIONAL FORMATTING (OHLC & PCR)
 # ---------------------------------------------------------------------------
-def generate_sheet2_row():
-    today = datetime.date.today()
-    today_str = today.strftime('%Y-%m-%d')
-    day_name = today.strftime('%A')
-    
-    open_price, high_price, low_price, close_price, pct_change_str = fetch_nifty_ohlc_and_change()
-    pcr = fetch_nifty_pcr()
-    
-    row = [
-        today_str,
-        day_name,
-        open_price,
-        high_price,
-        low_price,
-        close_price,
-        pct_change_str,
-        pcr
-    ]
-    return row
+def apply_sheet2_color_formatting(worksheet, new_row_index):
+    """
+    Applies color formatting:
+    - Columns C to G (Open, High, Low, Close, Change %): Green for '+', Red for '-'
+    - Column H (Nifty PCR): Compared dynamically against the previous row's PCR value.
+      If today > yesterday -> Green, else -> Red.
+    """
+    try:
+        all_values = worksheet.get_all_values()
+        
+        # We need at least a header row + yesterday's row + today's row to compare PCR
+        if len(all_values) >= 3 and new_row_index >= 3:
+            prev_pcr = float(all_values[new_row_index - 2][7]) # Index 7 is Column H (PCR)
+            curr_pcr = float(all_values[new_row_index - 1][7])
+            
+            pcr_color = {"red": 0.0, "green": 0.5, "blue": 0.0} if curr_pcr > prev_pcr else {"red": 0.85, "green": 0.18, "blue": 0.14}
+            
+            pcr_cell_format = {
+                "textFormat": {
+                    "foregroundColor": pcr_color,
+                    "bold": True
+                }
+            }
+            
+            # Apply format directly to the newly inserted PCR cell (Column H, Row = new_row_index)
+            cell_notation = f"H{new_row_index}"
+            worksheet.format(cell_notation, pcr_cell_format)
+            print(f"[PCR Formatting] Compared Today ({curr_pcr}) vs Yesterday ({prev_pcr}). Applied format.")
+
+        # Static conditional rules for OHLC & Change % (Columns C through G)
+        rules = [
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{"sheetId": worksheet.id, "startColumnIndex": 2, "endColumnIndex": 7}],
+                        "booleanRule": {
+                            "condition": {"type": "TEXT_STARTS_WITH", "values": [{"userEnteredValue": "+"}]},
+                            "format": {"textFormat": {"foregroundColor": {"red": 0.0, "green": 0.5, "blue": 0.0}, "bold": True}}
+                        }
+                    },
+                    "index": 0
+                }
+            },
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [{"sheetId": worksheet.id, "startColumnIndex": 2, "endColumnIndex": 7}],
+                        "booleanRule": {
+                            "condition": {"type": "TEXT_STARTS_WITH", "values": [{"userEnteredValue": "-"}]},
+                            "format": {"textFormat": {"foregroundColor": {"red": 0.85, "green": 0.18, "blue": 0.14}, "bold": True}}
+                        }
+                    },
+                    "index": 1
+                }
+            }
+        ]
+        worksheet.spreadsheet.batch_update({"requests": rules})
+        print("[Sheet2 Formatting Success] Applied color formatting rules.")
+    except Exception as e:
+        print(f"[Sheet2 Formatting Note]: {e}")
 
 
 # ---------------------------------------------------------------------------
-# 4. AUTHENTICATE & WRITE TO SHEET2
+# 4. MAIN EXECUTION PIPELINE
 # ---------------------------------------------------------------------------
 def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     if "GCP_SERVICE_ACCOUNT" in os.environ:
         info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
         creds = Credentials.from_service_account_info(info, scopes=scopes)
@@ -115,37 +130,43 @@ def get_gspread_client():
         creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
     return gspread.authorize(creds)
 
-
 def run():
-    print("Executing Evening Nifty 50 OHLC Pipeline for Sheet2...")
-    data_row = generate_sheet2_row()
-    print("Compiled Sheet2 Data Row:", data_row)
+    today = datetime.date.today()
+    open_p, high_p, low_p, close_p, pct_str = fetch_nifty_ohlc_and_change()
+    pcr = fetch_nifty_pcr()
+    
+    row = [
+        today.strftime('%Y-%m-%d'),
+        today.strftime('%A'),
+        f"{open_p:+.2f}",
+        f"{high_p:+.2f}",
+        f"{low_p:+.2f}",
+        f"{close_p:+.2f}",
+        pct_str,
+        pcr
+    ]
     
     client = get_gspread_client()
-    sheet_name = os.environ.get("SPREADSHEET_NAME", "NiftyDailyData")
-    
-    spreadsheet = client.open(sheet_name)
+    spreadsheet = client.open(os.environ.get("SPREADSHEET_NAME", "NiftyDailyData"))
     
     headers = ["DATE", "DAY", "NIFTY OPEN", "NIFTY HIGH", "NIFTY LOW", "NIFTY CLOSE", "NIFTY CHANGE %", "NIFTY PCR"]
-    
-    # Get or Create Sheet2
     try:
         worksheet = spreadsheet.worksheet("Sheet2")
     except Exception:
         worksheet = spreadsheet.add_worksheet(title="Sheet2", rows="1000", cols="10")
         worksheet.append_row(headers)
-    
-    # Verify/Set Headers if sheet is empty or header is outdated
-    existing_records = worksheet.get_all_values()
-    if not existing_records:
+        
+    if not worksheet.get_all_values():
         worksheet.append_row(headers)
-    elif "CHANGE" not in existing_records[0][6]:
-        # Update row 1 headers if previous header layout existed
-        worksheet.update_row(1, headers) if hasattr(worksheet, 'update_row') else worksheet.update(values=[headers], range_name="A1:H1")
-
-    worksheet.append_row(data_row)
-    print("Successfully appended Nifty OHLC + Change % row to Sheet2!")
-
+        
+    worksheet.append_row(row)
+    
+    # Get the row index of the newly added row
+    new_row_index = len(worksheet.get_all_values())
+    print(f"Successfully appended row to Sheet2 at index {new_row_index}!")
+    
+    # Apply color formatting rules including PCR comparison
+    apply_sheet2_color_formatting(worksheet, new_row_index)
 
 if __name__ == "__main__":
     run()
