@@ -8,25 +8,37 @@ from google.oauth2.service_account import Credentials
 import yfinance as yf
 
 # ---------------------------------------------------------------------------
-# 1. FETCH NIFTY 50 OHLC (OPEN, HIGH, LOW, CLOSE)
+# 1. FETCH NIFTY 50 OHLC & CHANGE %
 # ---------------------------------------------------------------------------
-def fetch_nifty_ohlc():
-    """Fetches Open, High, Low, Close prices for Nifty 50 (^NSEI)."""
+def fetch_nifty_ohlc_and_change():
+    """
+    Fetches Open, High, Low, Close, and % Change for Nifty 50 (^NSEI).
+    Returns: (open_price, high_price, low_price, close_price, pct_change_str)
+    """
     open_price, high_price, low_price, close_price = 0.0, 0.0, 0.0, 0.0
+    pct_change_str = "+0.00%"
+    
     try:
         nifty = yf.Ticker("^NSEI")
         hist = nifty.history(period="5d")
-        if not hist.empty:
+        if not hist.empty and len(hist) >= 2:
             latest = hist.iloc[-1]
+            prev_close = hist['Close'].iloc[-2]
+            
             open_price = round(latest['Open'], 2)
             high_price = round(latest['High'], 2)
             low_price = round(latest['Low'], 2)
             close_price = round(latest['Close'], 2)
-            print(f"[OHLC Success] Open: {open_price}, High: {high_price}, Low: {low_price}, Close: {close_price}")
+            
+            diff = close_price - prev_close
+            pct_change = (diff / prev_close) * 100
+            pct_change_str = f"{pct_change:+.2f}%"
+            
+            print(f"[OHLC Success] Open: {open_price}, High: {high_price}, Low: {low_price}, Close: {close_price}, Change %: {pct_change_str}")
     except Exception as e:
         print(f"[OHLC Fetch Error]: {e}")
         
-    return open_price, high_price, low_price, close_price
+    return open_price, high_price, low_price, close_price, pct_change_str
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +84,7 @@ def generate_sheet2_row():
     today_str = today.strftime('%Y-%m-%d')
     day_name = today.strftime('%A')
     
-    open_price, high_price, low_price, close_price = fetch_nifty_ohlc()
+    open_price, high_price, low_price, close_price, pct_change_str = fetch_nifty_ohlc_and_change()
     pcr = fetch_nifty_pcr()
     
     row = [
@@ -82,6 +94,7 @@ def generate_sheet2_row():
         high_price,
         low_price,
         close_price,
+        pct_change_str,
         pcr
     ]
     return row
@@ -113,20 +126,25 @@ def run():
     
     spreadsheet = client.open(sheet_name)
     
-    # Target Sheet2
+    headers = ["DATE", "DAY", "NIFTY OPEN", "NIFTY HIGH", "NIFTY LOW", "NIFTY CLOSE", "NIFTY CHANGE %", "NIFTY PCR"]
+    
+    # Get or Create Sheet2
     try:
         worksheet = spreadsheet.worksheet("Sheet2")
     except Exception:
         worksheet = spreadsheet.add_worksheet(title="Sheet2", rows="1000", cols="10")
-        worksheet.append_row(["DATE", "DAY", "NIFTY OPEN", "NIFTY HIGH", "NIFTY LOW", "NIFTY CLOSE", "NIFTY PCR"])
+        worksheet.append_row(headers)
     
-    # Ensure Header exists if sheet is empty
+    # Verify/Set Headers if sheet is empty or header is outdated
     existing_records = worksheet.get_all_values()
     if not existing_records:
-        worksheet.append_row(["DATE", "DAY", "NIFTY OPEN", "NIFTY HIGH", "NIFTY LOW", "NIFTY CLOSE", "NIFTY PCR"])
+        worksheet.append_row(headers)
+    elif "CHANGE" not in existing_records[0][6]:
+        # Update row 1 headers if previous header layout existed
+        worksheet.update_row(1, headers) if hasattr(worksheet, 'update_row') else worksheet.update(values=[headers], range_name="A1:H1")
 
     worksheet.append_row(data_row)
-    print("Successfully appended Nifty OHLC row to Sheet2!")
+    print("Successfully appended Nifty OHLC + Change % row to Sheet2!")
 
 
 if __name__ == "__main__":
