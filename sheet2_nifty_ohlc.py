@@ -11,8 +11,9 @@ import yfinance as yf
 # 1. FETCH NIFTY 50 OHLC & CHANGE %
 # ---------------------------------------------------------------------------
 def fetch_nifty_ohlc_and_change():
-    """Fetches Open, High, Low, Close, and % Change for Nifty 50 (^NSEI)."""
+    """Fetches Open, High, Low, Close, Point Change, and % Change for Nifty 50 (^NSEI)."""
     open_p, high_p, low_p, close_p = 0.0, 0.0, 0.0, 0.0
+    point_diff_str = "+0.00"
     pct_str = "+0.00%"
     prev_close = 0.0
     
@@ -29,12 +30,13 @@ def fetch_nifty_ohlc_and_change():
             close_p = round(latest['Close'], 2)
             
             diff = close_p - prev_close
+            point_diff_str = f"{diff:+.2f}"
             pct = (diff / prev_close) * 100
             pct_str = f"{pct:+.2f}%"
     except Exception as e:
         print(f"[OHLC Fetch Error]: {e}")
         
-    return open_p, high_p, low_p, close_p, pct_str, prev_close
+    return open_p, high_p, low_p, close_p, point_diff_str, pct_str, prev_close
 
 
 # ---------------------------------------------------------------------------
@@ -69,8 +71,9 @@ def apply_sheet2_custom_formatting(worksheet, new_row_index):
     - High (Col E): Always Green
     - Low (Col F): Always Red
     - Close (Col G): Green if Close > Open, Red if Close < Open
-    - Change % (Col H): Green for '+', Red for '-'
-    - PCR (Col I): Compared against previous row's PCR
+    - Nifty Change (Pts) (Col H): Green for '+', Red for '-'
+    - Change % (Col I): Green for '+', Red for '-'
+    - PCR (Col J): Compared against previous row's PCR
     """
     green_color = {"red": 0.0, "green": 0.5, "blue": 0.0}
     red_color = {"red": 0.85, "green": 0.18, "blue": 0.14}
@@ -80,8 +83,8 @@ def apply_sheet2_custom_formatting(worksheet, new_row_index):
         row_vals = all_values[new_row_index - 1]
         
         # Read raw values from the row to determine color
-        open_val = float(row_vals[2])   # Col C (Open)
         gap_val = float(row_vals[3])    # Col D (Gap Up/Down)
+        open_val = float(row_vals[2])   # Col C (Open)
         close_val = float(row_vals[6])  # Col G (Close)
         
         open_color = green_color if gap_val >= 0 else red_color
@@ -101,19 +104,24 @@ def apply_sheet2_custom_formatting(worksheet, new_row_index):
         close_color = green_color if close_val > open_val else red_color
         worksheet.format(f"G{new_row_index}", {"textFormat": {"foregroundColor": close_color, "bold": True}})
 
-        # 5. Format CHANGE % (Column H) -> Green if '+', Red if '-'
-        pct_val = row_vals[7] # Column H
+        # 5. Format NIFTY CHANGE (PTS) (Column H) -> Green if '+', Red if '-'
+        pts_val = row_vals[7] # Column H
+        pts_color = green_color if "+" in pts_val else red_color
+        worksheet.format(f"H{new_row_index}", {"textFormat": {"foregroundColor": pts_color, "bold": True}})
+
+        # 6. Format CHANGE % (Column I) -> Green if '+', Red if '-'
+        pct_val = row_vals[8] # Column I
         pct_color = green_color if "+" in pct_val else red_color
-        worksheet.format(f"H{new_row_index}", {"textFormat": {"foregroundColor": pct_color, "bold": True}})
+        worksheet.format(f"I{new_row_index}", {"textFormat": {"foregroundColor": pct_color, "bold": True}})
 
-        # 6. Format PCR (Column I) -> Compared with previous row's PCR
+        # 7. Format PCR (Column J) -> Compared with previous row's PCR
         if len(all_values) >= 3 and new_row_index >= 3:
-            prev_pcr = float(all_values[new_row_index - 2][8]) # Column I
-            curr_pcr = float(all_values[new_row_index - 1][8])
+            prev_pcr = float(all_values[new_row_index - 2][9]) # Column J
+            curr_pcr = float(all_values[new_row_index - 1][9])
             pcr_color = green_color if curr_pcr > prev_pcr else red_color
-            worksheet.format(f"I{new_row_index}", {"textFormat": {"foregroundColor": pcr_color, "bold": True}})
+            worksheet.format(f"J{new_row_index}", {"textFormat": {"foregroundColor": pcr_color, "bold": True}})
 
-        print("[Sheet2 Custom Formatting Success] Applied clean single-gap column colors!")
+        print("[Sheet2 Custom Formatting Success] Applied point change and column colors!")
 
     except Exception as e:
         print(f"[Formatting Error]: {e}")
@@ -133,7 +141,7 @@ def get_gspread_client():
 
 def run():
     today = datetime.date.today()
-    open_p, high_p, low_p, close_p, pct_str, prev_close = fetch_nifty_ohlc_and_change()
+    open_p, high_p, low_p, close_p, point_diff_str, pct_str, prev_close = fetch_nifty_ohlc_and_change()
     pcr = fetch_nifty_pcr()
     
     # Calculate single gap up/down point difference
@@ -147,19 +155,19 @@ def run():
         "DATE", "DAY", 
         "NIFTY OPEN", "GAP UP/DOWN (PTS)", 
         "NIFTY HIGH", "NIFTY LOW", 
-        "NIFTY CLOSE", "NIFTY CHANGE %", "NIFTY PCR"
+        "NIFTY CLOSE", "NIFTY CHANGE (PTS)", "NIFTY CHANGE %", "NIFTY PCR"
     ]
     
     try:
         worksheet = spreadsheet.worksheet("Sheet2")
     except Exception:
-        worksheet = spreadsheet.add_worksheet(title="Sheet2", rows="1000", cols="10")
+        worksheet = spreadsheet.add_worksheet(title="Sheet2", rows="1000", cols="11")
         worksheet.append_row(headers)
         
     if not worksheet.get_all_values():
         worksheet.append_row(headers)
         
-    # Build complete row with exact columns
+    # Build complete row with exact columns including point change
     complete_row = [
         today.strftime('%Y-%m-%d'),
         today.strftime('%A'),
@@ -168,6 +176,7 @@ def run():
         high_p, 
         low_p, 
         close_p, 
+        point_diff_str, 
         pct_str, 
         pcr
     ]
@@ -179,7 +188,7 @@ def run():
     # Apply custom coloring logic based on row values
     apply_sheet2_custom_formatting(worksheet, new_row_index)
     
-    print(f"Successfully appended clean row to Sheet2 at index {new_row_index}!")
+    print(f"Successfully appended row with Point Change to Sheet2 at index {new_row_index}!")
 
 if __name__ == "__main__":
     run()
