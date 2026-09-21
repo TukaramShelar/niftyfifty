@@ -2,7 +2,10 @@ name: Daily Market Data Fetcher
 
 on:
   schedule:
+    # 8:55 AM IST (3:25 AM UTC) - Early Morning Pre-Market Run
     - cron: '25 3 * * 1-5'
+    # 6:45 PM IST (1:15 PM UTC) - Post-Market Final Data Logging Run
+    - cron: '15 13 * * 1-5'
   workflow_dispatch:
 
 jobs:
