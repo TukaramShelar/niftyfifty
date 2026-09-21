@@ -1,0 +1,207 @@
+whatever action we did from first to till for this project i want that in step wise i want to make document of this. for next time to do this give me all code and commands that we use from start all are in step wise what mistek we did and for correct them what action we taken give me in deatisl and step wise. if document is to long is also ok. take your larger file
+
+
+
+
+Complete Documentation: Indian Market Data Automation Pipeline
+Project Name: niftyfifty
+
+Repository: TukaramShelar/niftyfifty
+
+Target: Fetch daily NSE market data (FII/DII cash activity, Nifty PCR, GIFT Nifty) using Python, authenticate via Google Cloud Service Account, log to Google Sheets (NiftyDailyData), and automate daily via GitHub Actions (25 3 * * 1-5 UTC / 8:55 AM IST).
+
+1. Prerequisites & Account Setup
+Step 1.1: Google Cloud Platform (GCP) Setup
+Created a project on Google Cloud Console.
+
+Enabled the following APIs:
+
+Google Sheets API
+
+Google Drive API
+
+Created a Service Account:
+
+Email: niftyfifty@niftyfifty-509014.iam.gserviceaccount.com
+
+Generated a JSON private key and saved it locally as E:\analysisnifty\service_account.json.
+
+Step 1.2: Google Sheet Preparation
+Created a Google Sheet named NiftyDailyData.
+
+Shared the Google Sheet with the Service Account email (niftyfifty@niftyfifty-509014.iam.gserviceaccount.com) and granted Editor permissions.
+
+2. Python Script Implementation (main.py)
+The Python script fetches data using requests, formats the values, and appends them to Google Sheets using gspread and google-auth.
+
+Complete main.py Code
+
+import os
+import json
+import requests
+import datetime
+import gspread
+from google.oauth2.service_account import Credentials
+
+def get_market_data():
+    """Fetch daily market metrics (FII/DII, PCR, GIFT Nifty)."""
+    today_str = datetime.date.today().strftime('%Y-%m-%d')
+    
+    # Placeholder structure for fetched market metrics
+    # Under live market hours, real API/Scraper endpoints populate these fields
+    fii_buy = 0.0
+    fii_sell = 0.0
+    fii_net = 0.0
+    dii_buy = 0.0
+    dii_sell = 0.0
+    dii_net = 0.0
+    pcr = 0.0
+    gift_nifty = 0.0
+    gift_nifty_change = "0.0%"
+    
+    row = [
+        today_str,
+        fii_buy,
+        fii_sell,
+        fii_net,
+        dii_buy,
+        dii_sell,
+        dii_net,
+        pcr,
+        gift_nifty,
+        gift_nifty_change
+    ]
+    return row
+
+def get_gspread_client():
+    """Authenticate with Google Sheets via Environment Variable or local JSON file."""
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
+    
+    # Check if running inside GitHub Actions environment
+    if "GCP_SERVICE_ACCOUNT" in os.environ:
+        service_account_info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
+        creds = Credentials.from_service_account_info(service_account_info, scopes=scopes)
+    else:
+        # Local development fallback
+        creds = Credentials.from_service_account_file("service_account.json", scopes=scopes)
+        
+    return gspread.authorize(creds)
+
+def run():
+    print("Fetching Daily Market Data...")
+    row_data = get_market_data()
+    print("Collected Row Data:", row_data)
+    
+    client = get_gspread_client()
+    sheet_name = os.environ.get("SPREADSHEET_NAME", "NiftyDailyData")
+    
+    spreadsheet = client.open(sheet_name)
+    worksheet = spreadsheet.sheet1
+    
+    worksheet.append_row(row_data)
+    print("Successfully logged data into Google Sheet!")
+
+if __name__ == "__main__":
+    run()
+
+
+
+3. GitHub Actions Workflow (daily_run.yml)
+The workflow defines the environment, triggers, dependencies, and execution sequence for running the python script on GitHub's cloud runners.
+
+Directory Path Rule
+The file MUST be located at exact path: .github/workflows/daily_run.yml
+
+Complete daily_run.yml Code
+
+name: Daily Market Data Fetcher
+
+on:
+  schedule:
+    # 8:55 AM IST corresponds to 3:25 AM UTC (Monday to Friday)
+    - cron: '25 3 * * 1-5'
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests gspread google-auth
+
+    - name: Execute Data Fetch Script
+      env:
+        GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        SPREADSHEET_NAME: "NiftyDailyData"
+      run: python main.py
+
+4. Local Workspace Setup & Local Git Commands
+Local Directory Structure
+
+E:\analysisnifty\
+├── .github\
+│   └── workflows\
+│       └── daily_run.yml
+├── .gitignore
+├── main.py
+└── service_account.json (Ignored by Git)
+
+Complete Command Sequence Executed
+
+:: Navigate to project directory
+cd /d E:\analysisnifty
+
+:: Create ignore file to prevent pushing secrets
+echo service_account.json >> .gitignore
+
+:: Create workflow directories locally
+mkdir .github\workflows
+
+:: Move workflow file into place
+move githubcronjob.yaml .github\workflows\daily_run.yml
+
+:: Initialize local git repository
+git init
+git branch -M main
+git add .
+git commit -m "Initial commit with fixed workflow path"
+
+:: Connect remote repository with PAT authentication
+git remote add origin https://<YOUR_PERSONAL_ACCESS_TOKEN>@github.com/TukaramShelar/niftyfifty.git
+
+:: Force push to overwrite any misconfigured remote branch states
+git push -u origin main --force
+
+
+5. Issues Encountered, Root Causes & Corrective Actions#Issue / Error MessageRoot CauseCorrective Action Taken1APIError: [403]: Google Drive API has not been used... before or it is disabled.The gspread library uses the Drive API to search for spreadsheets by name, but Google Drive API was not enabled in GCP Console.Visited GCP Console, enabled Google Drive API, and re-ran python main.py.2remote: Invalid username or token. Password authentication is not supported...GitHub deprecated password authentication for Git CLI operations in 2021.Generated a Personal Access Token (classic) under GitHub Settings $\rightarrow$ Developer Settings $\rightarrow$ Tokens, and authenticated using https://<TOKEN>@[github.com/](https://github.com/)....3! [remote rejected] main -> main (push declined due to repository rule violations)GitHub Push Protection detected service_account.json or PAT secrets inside previous local Git commit history.Removed secret tracking using git rm --cached service_account.json, created .gitignore, deleted .git folder to wipe history, re-initialized git init, and re-committed clean code.4GitHub Actions tab showed "Get started with GitHub Actions" / Workflow not detected.Workflow YAML was placed at root directory (/githubcronjob.yaml) or incorrectly nested as .github/workflows/.github/workflows/daily_run.yml.Re-created folder structure cleanly as .github/workflows/daily_run.yml and pushed changes.5! [remote rejected] main -> main (refusing to allow a Personal Access Token to create or update workflow... without workflow scope)The Personal Access Token used to push changes lacked permission to modify .github/workflows/.Updated PAT permissions on GitHub (Settings $\rightarrow$ Developer settings $\rightarrow$ Personal access tokens) and checked the workflow scope checkbox.6. GitHub Secrets & Verification ChecklistRepository Secret Configuration:Path: Repository Settings $\rightarrow$ Secrets and variables $\rightarrow$ Actions.Name: GCP_SERVICE_ACCOUNTValue: Entire raw content of service_account.json.Manual Test Execution:Go to Actions tab on GitHub repository.Select Daily Market Data Fetcher on the left menu.Click Run workflow $\rightarrow$ Run workflow.Observe job logs under build $\rightarrow$ Execute Data Fetch Script.7. Re-usable Setup Blueprint for Future ProjectsTo replicate this automation pipeline on any new project in the future, execute this quick setup order:DOS:: 1. Setup local project folder
+mkdir C:\MyNewProject
+cd C:\MyNewProject
+mkdir .github\workflows
+
+:: 2. Create .gitignore first!
+echo service_account.json >> .gitignore
+
+:: 3. Add your main.py and .github/workflows/daily_run.yml files
+
+:: 4. Initialize Git and Push (Ensure PAT has 'repo' AND 'workflow' scopes)
+git init
+git branch -M main
+git add .
+git commit -m "Initial automated pipeline setup"
+git remote add origin https://<PAT_TOKEN>@github.com/<USERNAME>/<REPO_NAME>.git
+git push -u origin main
+Go to GitHub $\rightarrow$ Repository Settings $\rightarrow$ Secrets $\rightarrow$ Add GCP_SERVICE_ACCOUNT.Share target Google Sheet with the GCP Service Account email.

@@ -1,0 +1,50 @@
+====================================================================
+WHATSAPP NOTIFICATION SETUP GUIDE FOR CALLMEBOT
+Target Phone Number: +919689338492
+====================================================================
+
+STEP 1: ACTIVATE CALLMEBOT ON WHATSAPP
+--------------------------------------------------------------------
+1. Save the CallMeBot contact number on your phone:
+   Name: CallMeBot
+   Phone: +34 621 33 17 09
+
+2. Open WhatsApp and send the following exact message to CallMeBot:
+   I allow callmebot to send me messages
+
+3. Wait 1 to 2 minutes. CallMeBot will reply with your personal 
+   API Key. (e.g., "API Key Created: 123456")
+
+4. Keep this API Key safe for Step 2.
+
+
+STEP 2: ADD SECRETS TO GITHUB REPOSITORY
+--------------------------------------------------------------------
+1. Go to your GitHub repository:
+   https://github.com/TukaramShelar/niftyfifty
+
+2. Click on Settings -> Secrets and variables -> Actions.
+
+3. Click the "New repository secret" button to add Secret #1:
+   Name:  WHATSAPP_PHONE
+   Value: +919689338492
+
+4. Click the "New repository secret" button to add Secret #2:
+   Name:  WHATSAPP_APIKEY
+   Value: <PASTE_YOUR_CALLMEBOT_API_KEY_HERE>
+
+
+STEP 3: UPDATED WORKFLOW ENVIRONMENT VARIABLE SETUP
+--------------------------------------------------------------------
+In your GitHub Workflow file (.github/workflows/daily_run.yml), ensure
+the following environment variables are passed to the python script:
+
+    - name: Run Script
+      env:
+        GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+        SPREADSHEET_NAME: "NiftyDailyData"
+        WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+        WHATSAPP_APIKEY: ${{ secrets.WHATSAPP_APIKEY }}
+      run: python main.py
+
+====================================================================
