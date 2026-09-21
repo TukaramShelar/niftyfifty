@@ -246,25 +246,9 @@ def run():
     spreadsheet = client.open(sheet_name)
     worksheet = spreadsheet.sheet1
     
-    today_str = data_row[0]
-    
-    # SINGLE-ROW DEDUPLICATION LOGIC
-    col_a = worksheet.col_values(1)
-    
-    if today_str in col_a:
-        row_idx = col_a.index(today_str) + 1
-        print(f"Row for {today_str} found at index {row_idx}. Updating existing row...")
-        
-        # Compat-safe cell range write for gspread v5 & v6
-        cell_list = worksheet.range(f"A{row_idx}:V{row_idx}")
-        for i, val in enumerate(data_row):
-            cell_list[i].value = val
-        worksheet.update_cells(cell_list)
-        
-        print("Successfully updated single existing row!")
-    else:
-        worksheet.append_row(data_row)
-        print("Successfully appended new row!")
+    # ALWAYS APPEND A NEW ROW
+    worksheet.append_row(data_row)
+    print("Successfully appended a new row to Google Sheets!")
 
 
 if __name__ == "__main__":
