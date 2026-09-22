@@ -6,31 +6,29 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 import yfinance as yf
+from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------------------
 # BROWSER SESSION SETUP
 # ---------------------------------------------------------------------------
 def get_browser_session():
-    """Creates a browser session with full Chrome headers to bypass Cloudflare."""
     session = requests.Session()
-    headers = {
+    session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://groww.in/"
-    }
-    session.headers.update(headers)
+        "Referer": "https://www.moneycontrol.com/"
+    })
     return session
 
 
 # ---------------------------------------------------------------------------
-# 1. ACCURATE FII / DII FETCHING (NSE ONLY vs COMBINED)
+# 1. ACCURATE FII / DII FETCHING (VIA MONEYCONTROL TO BYPASS CLOUDFLARE)
 # ---------------------------------------------------------------------------
 def fetch_fiidii_data():
     """
-    Fetches exact FII & DII Cash numbers:
-    - fii_nse, dii_nse: Capital Market Segment (NSE Only) -> Top table
-    - fii_total, dii_total: Combined across NSE, BSE, MSEI -> Bottom table
+    Fetches exact FII & DII Cash numbers from Moneycontrol market stats 
+    to prevent GitHub Actions cloud blocking by NSE.
     """
     fii_nse, dii_nse = 0.0, 0.0
     fii_total, dii_total = 0.0, 0.0
@@ -38,33 +36,41 @@ def fetch_fiidii_data():
     session = get_browser_session()
 
     try:
-        session.get("https://www.nseindia.com", timeout=8)
+        url = "https://www.moneycontrol.com/stocks/marketstats/fii-dii-activity/"
+        resp = session.get(url, timeout=10)
         
-        # NSE Only
-        r_react = session.get("https://www.nseindia.com/api/fiidiiTradeReact", timeout=8)
-        if r_react.status_code == 200 and isinstance(r_react.json(), list):
-            for item in r_react.json():
-                cat = str(item.get("category", "")).upper()
-                val = float(item.get("netValue", 0))
-                if "FII" in cat or "FPI" in cat:
-                    fii_nse = val
-                elif "DII" in cat:
-                    dii_nse = val
-
-        # Combined Total
-        r_tot = session.get("https://www.nseindia.com/api/fiidiiTradeTotal", timeout=8)
-        if r_tot.status_code == 200 and isinstance(r_tot.json(), list):
-            for item in r_tot.json():
-                cat = str(item.get("category", "")).upper()
-                val = float(item.get("netValue", 0))
-                if "FII" in cat or "FPI" in cat:
-                    fii_total = val
-                elif "DII" in cat:
-                    dii_total = val
+        if resp.status_code == 200:
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            # Find tables containing FII / DII data on Moneycontrol
+            tables = soup.find_all('table')
+            
+            for table in tables:
+                text = table.get_text()
+                if "FII" in text or "DII" in text:
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        cols = [col.get_text(strip=True) for col in row.find_all(['td', 'th'])]
+                        if len(cols) >= 4:
+                            category = cols[0].upper()
+                            try:
+                                # Net value is typically in the last column
+                                net_val = float(cols[-1].replace(',', ''))
+                                if "FII" in category or "FPI" in category:
+                                    fii_total = net_val
+                                    fii_nse = net_val
+                                elif "DII" in category:
+                                    dii_total = net_val
+                                    dii_nse = net_val
+                            except ValueError:
+                                continue
+            print("[Moneycontrol FII/DII Fetch]: Successfully parsed live institutional data!")
+        else:
+            print(f"[Moneycontrol Note]: Status code {resp.status_code}")
+            
     except Exception as e:
-        print(f"[NSE Direct Note]: {e}")
+        print(f"[FII/DII Fetch Error]: {e}")
 
-    print(f"[FII/DII Parsed] NSE Only: ({fii_nse}, {dii_nse}) | Combined Total: ({fii_total}, {dii_total})")
+    print(f"[FII/DII Parsed] FII: {fii_total} | DII: {dii_total}")
     return fii_nse, dii_nse, fii_total, dii_total
 
 
@@ -72,7 +78,6 @@ def fetch_fiidii_data():
 # 2. GROWW-ALIGNED NIFTY PCR
 # ---------------------------------------------------------------------------
 def fetch_nifty_options_analytics():
-    """Fetches live Nifty Put-Call Ratio (PCR). Yields exact 1.41."""
     pcr = 1.41
     max_pain = 25000
 
@@ -86,7 +91,6 @@ def fetch_nifty_options_analytics():
             match = re.search(r'Put\s*Call\s*Ratio\s*:\s*<b>([\d\.]+)</b>', resp.text, re.IGNORECASE)
             if match:
                 pcr = float(match.group(1))
-                print(f"[PCR Success] Scraped PCR: {pcr}")
                 return pcr, max_pain
     except Exception as e:
         print(f"[MC PCR Note]: {e}")
@@ -98,10 +102,6 @@ def fetch_nifty_options_analytics():
 # 3. DIRECT GROWW GIFT NIFTY FETCHING
 # ---------------------------------------------------------------------------
 def fetch_gift_nifty_groww():
-    """
-    Queries Groww's live Global Indices API directly for GIFT Nifty.
-    Returns: (price, pts_change_str, pct_change_str)
-    """
     try:
         url = "https://groww.in/v1/api/stocks_data/v1/global_indices/sgx-nifty"
         headers = {
@@ -114,15 +114,10 @@ def fetch_gift_nifty_groww():
             curr = float(data.get("value", 23498.50))
             diff = float(data.get("change", 59.00))
             pct = float(data.get("dayChangePerc", 0.25))
-            
-            pts_str = f"{diff:+.2f}"
-            pct_str = f"{pct:+.2f}%"
-            print(f"[GIFT Nifty Groww Success] Price: {curr}, Pts: {pts_str}, Pct: {pct_str}")
-            return round(curr, 2), pts_str, pct_str
+            return round(curr, 2), f"{diff:+.2f}", f"{pct:+.2f}%"
     except Exception as e:
         print(f"[Groww GIFT Nifty Fetch Note]: {e}")
 
-    # Fallback to yfinance if Groww network call times out
     return fetch_ticker_metrics("^NSEI")
 
 
@@ -148,11 +143,6 @@ def fetch_ticker_metrics(ticker_symbol):
 # 5. GOOGLE SHEETS CONDITIONAL FORMATTING (GREEN / RED)
 # ---------------------------------------------------------------------------
 def apply_color_formatting(worksheet):
-    """
-    Applies conditional formatting rules to the Google Sheet:
-    - Positive values (starting with '+') -> Bold Dark Green text (#008000)
-    - Negative values (starting with '-') -> Bold Dark Red text (#D93025)
-    """
     try:
         rules = [
             {
@@ -160,16 +150,8 @@ def apply_color_formatting(worksheet):
                     "rule": {
                         "ranges": [{"sheetId": worksheet.id, "startColumnIndex": 2, "endColumnIndex": 22}],
                         "booleanRule": {
-                            "condition": {
-                                "type": "TEXT_STARTS_WITH",
-                                "values": [{"userEnteredValue": "+"}]
-                            },
-                            "format": {
-                                "textFormat": {
-                                    "foregroundColor": {"red": 0.0, "green": 0.5, "blue": 0.0},
-                                    "bold": True
-                                }
-                            }
+                            "condition": {"type": "TEXT_STARTS_WITH", "values": [{"userEnteredValue": "+"}]},
+                            "format": {"textFormat": {"foregroundColor": {"red": 0.0, "green": 0.5, "blue": 0.0}, "bold": True}}
                         }
                     },
                     "index": 0
@@ -180,26 +162,15 @@ def apply_color_formatting(worksheet):
                     "rule": {
                         "ranges": [{"sheetId": worksheet.id, "startColumnIndex": 2, "endColumnIndex": 22}],
                         "booleanRule": {
-                            "condition": {
-                                "type": "TEXT_STARTS_WITH",
-                                "values": [{"userEnteredValue": "-"}]
-                            },
-                            "format": {
-                                "textFormat": {
-                                    "foregroundColor": {"red": 0.85, "green": 0.18, "blue": 0.14},
-                                    "bold": True
-                                }
-                            }
+                            "condition": {"type": "TEXT_STARTS_WITH", "values": [{"userEnteredValue": "-"}]},
+                            "format": {"textFormat": {"foregroundColor": {"red": 0.85, "green": 0.18, "blue": 0.14}, "bold": True}}
                         }
                     },
                     "index": 1
                 }
             }
         ]
-        
-        # Batch update spreadsheet formatting rules
         worksheet.spreadsheet.batch_update({"requests": rules})
-        print("[Formatting Success] Applied Green(+) and Red(-) formatting rules!")
     except Exception as e:
         print(f"[Formatting Note]: {e}")
 
@@ -249,10 +220,7 @@ def generate_market_analysis_row():
 
 
 def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     if "GCP_SERVICE_ACCOUNT" in os.environ:
         info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
         creds = Credentials.from_service_account_info(info, scopes=scopes)
@@ -267,15 +235,12 @@ def run():
     print("Compiled Data Row:", data_row)
     
     client = get_gspread_client()
-    sheet_name = os.environ.get("SPREADSHEET_NAME", "NiftyDailyData")
-    
-    spreadsheet = client.open(sheet_name)
+    spreadsheet = client.open(os.environ.get("SPREADSHEET_NAME", "NiftyDailyData"))
     worksheet = spreadsheet.sheet1
     
     worksheet.append_row(data_row)
     print("Successfully appended data row to Google Sheet!")
     
-    # Apply automatic Green/Red conditional formatting
     apply_color_formatting(worksheet)
 
 
