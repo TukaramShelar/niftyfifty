@@ -29,11 +29,11 @@ def get_browser_session():
 def fetch_fiidii_data():
     """
     Fetches exact FII & DII Cash numbers:
-    - fii_nse, dii_nse: Capital Market Segment (NSE Only) -> -709.50 / +2675.27
-    - fii_total, dii_total: Combined across NSE, BSE, MSEI -> -576.20 / +2797.27
+    - fii_nse, dii_nse: Capital Market Segment (NSE Only) -> Top table
+    - fii_total, dii_total: Combined across NSE, BSE, MSEI -> Bottom table
     """
-    fii_nse, dii_nse = -709.50, 2675.27
-    fii_total, dii_total = -576.20, 2797.27
+    fii_nse, dii_nse = 0.0, 0.0
+    fii_total, dii_total = 0.0, 0.0
 
     session = get_browser_session()
 
@@ -62,7 +62,7 @@ def fetch_fiidii_data():
                 elif "DII" in cat:
                     dii_total = val
     except Exception as e:
-        print(f"[NSE Direct Note - Cloud Blocked]: {e}")
+        print(f"[NSE Direct Note]: {e}")
 
     print(f"[FII/DII Parsed] NSE Only: ({fii_nse}, {dii_nse}) | Combined Total: ({fii_total}, {dii_total})")
     return fii_nse, dii_nse, fii_total, dii_total
