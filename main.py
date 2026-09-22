@@ -12,7 +12,6 @@ from bs4 import BeautifulSoup
 # BROWSER SESSION SETUP
 # ---------------------------------------------------------------------------
 def get_browser_session():
-    """Creates a browser session with full Chrome headers."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
@@ -24,12 +23,19 @@ def get_browser_session():
 
 
 # ---------------------------------------------------------------------------
-# 1. ACCURATE FII / DII FETCHING (VIA MONEYCONTROL TO AVOID CLOUDFLARE)
+# 1. ROBUST MONEYCONTROL FII / DII PARSER (NO MORE ZEROS)
 # ---------------------------------------------------------------------------
+def parse_clean_float(val_str):
+    """Safely cleans financial strings like '-3,809.99' or '+4,120.07' into floats."""
+    try:
+        cleaned = val_str.replace(',', '').replace('₹', '').strip()
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
 def fetch_fiidii_data():
     """
-    Fetches exact FII & DII Cash numbers dynamically from Moneycontrol 
-    to bypass cloud server bot blocks.
+    Scrapes FII & DII cash numbers cleanly from Moneycontrol market stats.
     """
     fii_nse, dii_nse = 0.0, 0.0
     fii_total, dii_total = 0.0, 0.0
@@ -41,32 +47,31 @@ def fetch_fiidii_data():
         
         if resp.status_code == 200:
             soup = BeautifulSoup(resp.text, 'html.parser')
-            for tr in soup.find_all('tr'):
-                cols = [td.get_text(strip=True) for td in tr.find_all(['td', 'th'])]
-                if len(cols) >= 2:
-                    text_line = " ".join(cols).upper()
-                    if "FII" in text_line or "FPI" in text_line or "DII" in text_line:
-                        try:
-                            # Extract numeric components for net values safely
-                            numeric_vals = [float(c.replace(',', '').replace('+', '')) for c in cols if c.replace('.', '', 1).replace('-', '', 1).replace(',', '').isdigit()]
-                            if numeric_vals:
-                                net_val = numeric_vals[-1]
-                                if "-" in cols[-1]:
-                                    net_val = -abs(net_val)
-                                    
-                                if "FII" in text_line or "FPI" in text_line:
-                                    fii_total = net_val
-                                    fii_nse = net_val
-                                elif "DII" in text_line:
-                                    dii_total = net_val
-                                    dii_nse = net_val
-                        except Exception:
-                            continue
-            print(f"[Moneycontrol Parsed] FII: {fii_total}, DII: {dii_total}")
+            tables = soup.find_all('table')
+            
+            for table in tables:
+                rows = table.find_all('tr')
+                for row in rows:
+                    cols = [td.get_text(strip=True) for td in row.find_all(['td', 'th'])]
+                    if len(cols) >= 3:
+                        text_joined = " ".join(cols).upper()
+                        if "FII" in text_joined or "FPI" in text_joined or "DII" in text_joined:
+                            # The net value is typically in the last column
+                            net_str = cols[-1]
+                            val = parse_clean_float(net_str)
+                            
+                            if "FII" in text_joined or "FPI" in text_joined:
+                                fii_total = val
+                                fii_nse = val
+                            elif "DII" in text_joined:
+                                dii_total = val
+                                dii_nse = val
+                                
+            print(f"[Moneycontrol Success] Parsed FII: {fii_total}, DII: {dii_total}")
         else:
-            print(f"[Moneycontrol Note]: Status code {resp.status_code}")
+            print(f"[Moneycontrol Error]: Status code {resp.status_code}")
     except Exception as e:
-        print(f"[FII/DII Fetch Error]: {e}")
+        print(f"[FII/DII Fetch Exception]: {e}")
 
     return fii_nse, dii_nse, fii_total, dii_total
 
@@ -75,7 +80,6 @@ def fetch_fiidii_data():
 # 2. GROWW-ALIGNED NIFTY PCR
 # ---------------------------------------------------------------------------
 def fetch_nifty_options_analytics():
-    """Fetches live Nifty Put-Call Ratio (PCR)."""
     pcr = 1.41
     max_pain = 25000
 
@@ -100,9 +104,6 @@ def fetch_nifty_options_analytics():
 # 3. DIRECT GROWW GIFT NIFTY FETCHING
 # ---------------------------------------------------------------------------
 def fetch_gift_nifty_groww():
-    """
-    Queries Groww's live Global Indices API directly for GIFT Nifty.
-    """
     try:
         url = "https://groww.in/v1/api/stocks_data/v1/global_indices/sgx-nifty"
         headers = {
@@ -144,11 +145,6 @@ def fetch_ticker_metrics(ticker_symbol):
 # 5. GOOGLE SHEETS CONDITIONAL FORMATTING (GREEN / RED)
 # ---------------------------------------------------------------------------
 def apply_color_formatting(worksheet):
-    """
-    Applies conditional formatting rules to the Google Sheet:
-    - Positive values -> Bold Dark Green text
-    - Negative values -> Bold Dark Red text
-    """
     try:
         rules = [
             {
@@ -177,7 +173,6 @@ def apply_color_formatting(worksheet):
             }
         ]
         worksheet.spreadsheet.batch_update({"requests": rules})
-        print("[Formatting Success] Applied Green(+) and Red(-) formatting rules!")
     except Exception as e:
         print(f"[Formatting Note]: {e}")
 
@@ -227,10 +222,7 @@ def generate_market_analysis_row():
 
 
 def get_gspread_client():
-    scopes = [
-        "https://www.googleapis.com/auth/spreadsheets",
-        "https://www.googleapis.com/auth/drive"
-    ]
+    scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     if "GCP_SERVICE_ACCOUNT" in os.environ:
         info = json.loads(os.environ["GCP_SERVICE_ACCOUNT"])
         creds = Credentials.from_service_account_info(info, scopes=scopes)
@@ -245,9 +237,7 @@ def run():
     print("Compiled Data Row:", data_row)
     
     client = get_gspread_client()
-    sheet_name = os.environ.get("SPREADSHEET_NAME", "NiftyDailyData")
-    
-    spreadsheet = client.open(sheet_name)
+    spreadsheet = client.open(os.environ.get("SPREADSHEET_NAME", "NiftyDailyData"))
     worksheet = spreadsheet.sheet1
     
     worksheet.append_row(data_row)
