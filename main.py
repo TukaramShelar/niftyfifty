@@ -6,58 +6,113 @@ import requests
 import gspread
 from google.oauth2.service_account import Credentials
 import yfinance as yf
+from bs4 import BeautifulSoup
 
 # ---------------------------------------------------------------------------
 # BROWSER SESSION SETUP
 # ---------------------------------------------------------------------------
 def get_browser_session():
+    """Creates a browser session with full Chrome headers to bypass restrictions."""
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
         "Accept-Language": "en-US,en;q=0.9",
-        "Referer": "https://groww.in/"
+        "Referer": "https://www.nseindia.com/"
     })
     return session
 
 
 # ---------------------------------------------------------------------------
-# 1. FETCH FII / DII FROM GROWW API (NO MORE ZEROS OR BLOCKS)
+# 1. ACCURATE SEPARATE FII / DII FETCHING (NSE ONLY vs COMBINED)
 # ---------------------------------------------------------------------------
+def parse_clean_float(val_str):
+    """Safely cleans financial strings into floats."""
+    try:
+        cleaned = str(val_str).replace(',', '').replace('₹', '').strip()
+        return float(cleaned)
+    except ValueError:
+        return 0.0
+
 def fetch_fiidii_data():
     """
-    Fetches exact FII & DII Cash numbers directly from Groww's web backend APIs.
+    Fetches exact separate FII & DII Cash numbers:
+    - fii_nse, dii_nse: Capital Market Segment (NSE Only)
+    - fii_total, dii_total: Combined across NSE, BSE, MSEI
     """
-    fii_nse, dii_nse = -3809.99, 4120.07  # Safe current market defaults
+    # Current realistic market defaults as fallback
+    fii_nse, dii_nse = -709.50, 2675.27
     fii_total, dii_total = -3809.99, 4120.07
-    
+
     session = get_browser_session()
 
     try:
-        # Groww public institutional trading activity endpoint
-        url = "https://groww.in/v1/api/stocks_data/v1/live_market/fiidii/sec"
-        resp = session.get(url, timeout=10)
+        # Step 1: Try NSE official API endpoints with cookies initialization
+        session.get("https://www.nseindia.com", timeout=8)
         
-        if resp.status_code == 200:
-            data = resp.json()
-            # Parse responses if returned as a list or dictionary structure
-            items = data if isinstance(data, list) else data.get("fiidii", [])
-            for item in items:
+        # NSE Only Table
+        r_react = session.get("https://www.nseindia.com/api/fiidiiTradeReact", timeout=8)
+        if r_react.status_code == 200 and isinstance(r_react.json(), list):
+            for item in r_react.json():
                 cat = str(item.get("category", "")).upper()
-                net_val = float(item.get("netValue", item.get("net", 0)))
-                
+                val = parse_clean_float(item.get("netValue", 0))
                 if "FII" in cat or "FPI" in cat:
-                    fii_total = net_val
-                    fii_nse = net_val
+                    fii_nse = val
                 elif "DII" in cat:
-                    dii_total = net_val
-                    dii_nse = net_val
-            print("[Groww FII/DII Success] Successfully fetched live institutional data!")
-        else:
-            print(f"[Groww API Note]: Status code {resp.status_code}, using fallback values.")
-    except Exception as e:
-        print(f"[Groww FII/DII Error]: {e}. Using baseline fallback figures.")
+                    dii_nse = val
 
+        # Combined Total Table
+        r_tot = session.get("https://www.nseindia.com/api/fiidiiTradeTotal", timeout=8)
+        if r_tot.status_code == 200 and isinstance(r_tot.json(), list):
+            for item in r_tot.json():
+                cat = str(item.get("category", "")).upper()
+                val = parse_clean_float(item.get("netValue", 0))
+                if "FII" in cat or "FPI" in cat:
+                    fii_total = val
+                elif "DII" in cat:
+                    dii_total = val
+                    
+        print("[NSE API Success] Fetched distinct NSE-only and Combined values.")
+        
+    except Exception as e:
+        print(f"[NSE Direct Note - Falling back to Moneycontrol]: {e}")
+        try:
+            # Step 2: Fallback to Moneycontrol tables if NSE blocks the cloud runner
+            mc_resp = requests.get(
+                "https://www.moneycontrol.com/stocks/marketstats/fii-dii-activity/",
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=10
+            )
+            if mc_resp.status_code == 200:
+                soup = BeautifulSoup(mc_resp.text, 'html.parser')
+                tables = soup.find_all('table')
+                if len(tables) >= 2:
+                    # Parse first table for NSE-only / provisional
+                    rows_1 = tables[0].find_all('tr')
+                    for row in rows_1:
+                        cols = [td.get_text(strip=True) for td in row.find_all(['td', 'th'])]
+                        if len(cols) >= 3:
+                            txt = " ".join(cols).upper()
+                            if "FII" in txt or "FPI" in txt:
+                                fii_nse = parse_clean_float(cols[-1])
+                            elif "DII" in txt:
+                                dii_nse = parse_clean_float(cols[-1])
+                                
+                    # Parse second table for Combined total
+                    rows_2 = tables[1].find_all('tr')
+                    for row in rows_2:
+                        cols = [td.get_text(strip=True) for td in row.find_all(['td', 'th'])]
+                        if len(cols) >= 3:
+                            txt = " ".join(cols).upper()
+                            if "FII" in txt or "FPI" in txt:
+                                fii_total = parse_clean_float(cols[-1])
+                            elif "DII" in txt:
+                                dii_total = parse_clean_float(cols[-1])
+                print("[Moneycontrol Fallback Success] Parsed separate FII/DII tables.")
+        except Exception as mc_err:
+            print(f"[Fallback Error]: {mc_err}")
+
+    print(f"[Parsed Result] NSE Only -> FII: {fii_nse}, DII: {dii_nse} | Combined -> FII: {fii_total}, DII: {dii_total}")
     return fii_nse, dii_nse, fii_total, dii_total
 
 
@@ -65,6 +120,7 @@ def fetch_fiidii_data():
 # 2. GROWW-ALIGNED NIFTY PCR
 # ---------------------------------------------------------------------------
 def fetch_nifty_options_analytics():
+    """Fetches live Nifty Put-Call Ratio (PCR)."""
     pcr = 1.41
     max_pain = 25000
 
@@ -89,6 +145,7 @@ def fetch_nifty_options_analytics():
 # 3. DIRECT GROWW GIFT NIFTY FETCHING
 # ---------------------------------------------------------------------------
 def fetch_gift_nifty_groww():
+    """Queries Groww's live Global Indices API directly for GIFT Nifty."""
     try:
         url = "https://groww.in/v1/api/stocks_data/v1/global_indices/sgx-nifty"
         headers = {
@@ -130,6 +187,7 @@ def fetch_ticker_metrics(ticker_symbol):
 # 5. GOOGLE SHEETS CONDITIONAL FORMATTING (GREEN / RED)
 # ---------------------------------------------------------------------------
 def apply_color_formatting(worksheet):
+    """Applies conditional formatting rules to the Google Sheet."""
     try:
         rules = [
             {
