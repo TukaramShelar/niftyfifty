@@ -62,7 +62,7 @@ def fetch_fiidii_data():
                 elif "DII" in cat:
                     dii_total = val
     except Exception as e:
-        print(f"[NSE Direct Note]: {e}")
+        print(f"[NSE Direct Note - Cloud Blocked]: {e}")
 
     print(f"[FII/DII Parsed] NSE Only: ({fii_nse}, {dii_nse}) | Combined Total: ({fii_total}, {dii_total})")
     return fii_nse, dii_nse, fii_total, dii_total
